@@ -612,6 +612,7 @@ public class ChunkBuilder {
 
             @Override
             public void cancel() {
+                this.region.destroy();
                 this.region = null;
                 if (this.cancelled.compareAndSet(false, true)) {
                     BuiltChunk.this.scheduleRebuild(false);

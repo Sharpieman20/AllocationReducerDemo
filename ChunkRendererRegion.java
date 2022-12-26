@@ -68,6 +68,47 @@ implements BlockRenderView {
         return true;
     }
 
+
+    static class PooledObjectHolder<T> {
+
+        private static ConcurrentHashMap<Integer, ConcurrentLinkedQueue<PooledObjectHolder<T>>> freeHoldersBySize;
+        
+        private static ConcurrentLinkedQueue<PooledObjectHolder<T>> freeHolders;
+
+        private T[] objects;
+        
+        public PooledObjectHolder(int size) {
+            objects = new T[size];
+        }
+
+        private static ConcurrentLinkedQueue<PooledObjectHolder<T>> getQueue(int size) {
+            if (!freeHoldersBySize.contains(size)) {
+                freeHoldersBySize.putIfAbsent(size, new ConcurrentLinkedQueue<PooledObjectHolder<T>>());
+            }
+            return freeHoldersBySize.get(size);
+        }
+
+        public static BlockStateHolder<T> create(int size) {
+            ConcurrentLinkedQueue<PooledObjectHolder<T>> freeHolders = getQueue(size);
+            PooledObjectHolder<T> myHolder = freeHolders.poll();
+            if (myHolder == null) {
+                myHolder = new PooledObjectHolder<T>(size);
+            }
+            return myHolder;
+        }
+
+        public void set(int index, T value) {
+            objects[index] = value;
+        }
+
+        private void release() {
+            for (int i = 0; i < objects.length; i++) {
+                objects[i] = null;
+            }
+            getQueue(objects.length).add(this);
+        }
+    }
+
     public ChunkRendererRegion(World world, int chunkX, int chunkZ, WorldChunk[][] chunks, BlockPos startPos, BlockPos endPos) {
         this.world = world;
         this.chunkXOffset = chunkX;
@@ -77,15 +118,15 @@ implements BlockRenderView {
         this.xSize = endPos.getX() - startPos.getX() + 1;
         this.ySize = endPos.getY() - startPos.getY() + 1;
         this.zSize = endPos.getZ() - startPos.getZ() + 1;
-        this.blockStates = new BlockState[this.xSize * this.ySize * this.zSize];
-        this.fluidStates = new FluidState[this.xSize * this.ySize * this.zSize];
+        this.blockStates = PooledObjectHolder<BlockState>.create(this.xSize * this.ySize * this.zSize);
+        this.fluidStates = PooledObjectHolder<FluidState>.create(this.xSize * this.ySize * this.zSize);
         for (BlockPos lv : BlockPos.iterate(startPos, endPos)) {
             int k = ChunkSectionPos.getSectionCoord(lv.getX()) - chunkX;
             int l = ChunkSectionPos.getSectionCoord(lv.getZ()) - chunkZ;
             WorldChunk lv2 = chunks[k][l];
             int m = this.getIndex(lv);
-            this.blockStates[m] = lv2.getBlockState(lv);
-            this.fluidStates[m] = lv2.getFluidState(lv);
+            this.blockStates.set(m, lv2.getBlockState(lv));
+            this.fluidStates.set(m, lv2.getFluidState(lv));
         }
     }
 
@@ -146,6 +187,11 @@ implements BlockRenderView {
     @Override
     public int getBottomSectionLimit() {
         return this.world.getBottomSectionLimit();
+    }
+
+    public void destroy() {
+        this.blockStates.release();
+        this.fluidStates.release();
     }
 }
 
